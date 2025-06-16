@@ -19,7 +19,7 @@ class DatabaseSeeder extends Seeder
         //     PollingSubmissionSeeder::class,
         // ]);
 
-        User::factory()->create([
+        User::create([
             'name' => 'Admin',
             'email' => 'admin@gmail.com',
             'password' => Hash::make('password'),
