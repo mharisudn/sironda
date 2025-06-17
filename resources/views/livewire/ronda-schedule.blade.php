@@ -72,6 +72,12 @@
                                         <div class="flex-1 min-w-0">
                                             <h5 class="font-semibold text-gray-900 mb-2 truncate">
                                                 {{ $schedule->pollingCode->name ?? 'Area Tidak Diketahui' }}
+                                                @if($schedule->is_leader === true)
+                                                    <div
+                                                        class="flex items-center text-red-600 ">
+                                                        <span class="text-sm font-medium">Ketua Kelompok</span>
+                                                    </div>
+                                                @endif
                                             </h5>
 
                                             @if ($schedule->shift_type->value === 'Day')
