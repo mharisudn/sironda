@@ -13,13 +13,17 @@ class RondaShuffleService
     public function shuffle(RondaPeriode $periode): void
     {
         DB::transaction(function () use ($periode) {
-            RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))->delete();
+            RondaSchedule::whereHas('rondaTermin',
+                fn ($q) => $q->where('ronda_periode_id', $periode->id))
+                ->delete();
 
             $termins = $periode->rondaTermins()->withCount('rondaSchedules')->get();
             $terminIds = $termins->pluck('id')->toArray();
 
             $pollingSubmissions = PollingSubmission::with(['pollingCode', 'rondaTermin'])
-                ->whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))
+                ->whereHas('rondaTermin',
+                    fn ($q) => $q->where('ronda_periode_id', $periode->id)
+                )
                 ->get()
                 ->sortBy('sort')
                 ->groupBy('polling_code_id');
@@ -43,6 +47,7 @@ class RondaShuffleService
                 }
             }
 
+            // Process locked submissions
             foreach ($lockedSubmissions as $pollingCodeId => $submissions) {
                 if (isset($previousTerminMap[$pollingCodeId])) {
                     $assignedPollingCodeIds->push($pollingCodeId);
@@ -50,13 +55,14 @@ class RondaShuffleService
                     continue;
                 }
 
-                $firstSubmission = $submissions->where('sortBy', 1)->first();
+                $firstSubmission = $submissions->where('sort', 1)->first();
                 $termin = $firstSubmission?->rondaTermin;
                 $pollingCode = $firstSubmission?->pollingCode;
 
                 if (! $termin || ! $pollingCode) {
                     continue;
                 }
+
                 $quota = $termin->max_petugas;
                 $currentCount = RondaSchedule::where('ronda_termin_id', $termin->id)->count();
 
@@ -70,6 +76,7 @@ class RondaShuffleService
                 }
             }
 
+            // Process unlocked submissions
             $shuffledUnlocked = $unlockedSubmissions->shuffle();
             foreach ($shuffledUnlocked as $pollingCodeId => $submissions) {
                 if (isset($previousTerminMap[$pollingCodeId])) {
@@ -81,7 +88,6 @@ class RondaShuffleService
                     continue;
                 }
 
-                // Group berdasarkan sort_order
                 $sortedSubmissions = $submissions->sortBy('sort');
 
                 foreach ($sortedSubmissions as $submission) {
@@ -101,36 +107,116 @@ class RondaShuffleService
                 }
             }
 
-            $polledIds = $pollingSubmissions->keys();
-            $allCodes = PollingCode::all();
-            $unpolled = $allCodes->whereNotIn('id', $polledIds);
+            // IMPROVED: Handle unpolled users with multiple strategies
+            $this->assignUnpolledUsers($periode, $termins, $assignedPollingCodeIds, $previousTerminMap);
+        });
+    }
 
-            $availableTermins = $termins->filter(fn ($t) => $t->name !== 'Termin 1')->values();
-            $terminCount = $availableTermins->count();
-            $index = 0;
+    /**
+     * Assign users who haven't done polling with improved logic
+     */
+    protected function assignUnpolledUsers(RondaPeriode $periode, $termins, $assignedPollingCodeIds, $previousTerminMap)
+    {
+        $assignedIds = RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))
+            ->pluck('polling_code_id')
+            ->toArray();
 
-            foreach ($unpolled as $pollingCode) {
-                if ($terminCount === 0 || ! $pollingCode) {
-                    continue;
-                }
-                if (isset($previousTerminMap[$pollingCode->id])) {
-                    continue;
-                }
+        $unpolled = PollingCode::whereNotIn('id', $assignedIds)->get();
 
-                $targetTermin = $availableTermins[$index % $terminCount];
-                $quota = $targetTermin->max_petugas;
-                $currentCount = RondaSchedule::where('ronda_termin_id', $targetTermin->id)->count();
+        if ($unpolled->isEmpty()) {
+            return;
+        }
 
-                if ($currentCount < $quota) {
+        // Strategy 1: Try to fill remaining quota slots first
+        $this->fillRemainingQuotaSlots($termins, $unpolled, $previousTerminMap);
+
+        // Strategy 2: If still have unassigned users, extend quotas if needed
+        $this->handleRemainingUnpolledUsers($periode, $termins);
+    }
+
+    /**
+     * Fill remaining quota slots with unpolled users
+     */
+    protected function fillRemainingQuotaSlots($termins, $unpolled, $previousTerminMap)
+    {
+        // Sort termins by current availability (most available first)
+        $sortedTermins = $termins->map(function ($termin) {
+            $currentCount = RondaSchedule::where('ronda_termin_id', $termin->id)->count();
+            $termin->available_slots = max(0, $termin->max_petugas - $currentCount);
+
+            return $termin;
+        })->sortByDesc('available_slots')->values();
+
+        $shuffledUnpolled = $unpolled->shuffle(); // Keep as collection, just shuffle
+        $index = 0;
+
+        foreach ($shuffledUnpolled as $pollingCode) {
+            if (isset($previousTerminMap[$pollingCode->id])) {
+                continue;
+            }
+
+            $assigned = false;
+
+            // Try each termin starting from most available
+            foreach ($sortedTermins as $termin) {
+                $currentCount = RondaSchedule::where('ronda_termin_id', $termin->id)->count();
+
+                if ($currentCount < $termin->max_petugas) {
                     RondaSchedule::create([
                         'polling_code_id' => $pollingCode->id,
-                        'ronda_termin_id' => $targetTermin->id,
+                        'ronda_termin_id' => $termin->id,
                         'shift_type' => $pollingCode->shift_type ?? 'Mix',
                     ]);
-                    $index++;
+                    $assigned = true;
+                    break;
                 }
             }
-        });
+
+            // If no slot available in quota, use round-robin on all termins
+            if (! $assigned && $termins->count() > 0) {
+                $targetTermin = $termins[$index % $termins->count()];
+
+                RondaSchedule::create([
+                    'polling_code_id' => $pollingCode->id,
+                    'ronda_termin_id' => $targetTermin->id,
+                    'shift_type' => $pollingCode->shift_type ?? 'Mix',
+                ]);
+            }
+
+            $index++;
+        }
+    }
+
+    /**
+     * Handle any remaining unpolled users by extending quotas if necessary
+     */
+    protected function handleRemainingUnpolledUsers(RondaPeriode $periode, $termins)
+    {
+        $assignedIds = RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))
+            ->pluck('polling_code_id')
+            ->toArray();
+
+        $stillUnpolled = PollingCode::whereNotIn('id', $assignedIds)->get();
+
+        if ($stillUnpolled->isEmpty()) {
+            return;
+        }
+
+        // Distribute remaining users across all termins using round-robin
+        $index = 0;
+        foreach ($stillUnpolled as $pollingCode) {
+            if ($termins->count() > 0) {
+                $targetTermin = $termins[$index % $termins->count()];
+
+                RondaSchedule::create([
+                    'polling_code_id' => $pollingCode->id,
+                    'ronda_termin_id' => $targetTermin->id,
+                    'shift_type' => $pollingCode->shift_type ?? 'Mix',
+                ]);
+
+                $index++;
+            }
+        }
     }
 
     protected function getPreviousTerminMap(RondaPeriode $currentPeriode): array
