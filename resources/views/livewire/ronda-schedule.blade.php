@@ -172,5 +172,35 @@
                 </div>
             </div>
         @endforelse
+
+        <footer class="bg-white shadow-lg rounded-xl p-8 mt-6 border-t-4 border-indigo-500">
+            <div class="text-center">
+                <!-- Info Penanggung Jawab -->
+                <div class="mb-4">
+                    <div class="inline-flex items-center px-4 py-2 bg-green-100 rounded-lg mb-3">
+                        <svg class="w-5 h-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z">
+                            </path>
+                        </svg>
+                        <span class="text-sm font-semibold text-green-700">Penanggung Jawab Program</span>
+                    </div>
+                    <h3 class="text-md font-bold text-gray-800 mb-1">
+                        Ust. Maman Sulaeman, Lc., M.A
+                    </h3>
+                    <p class="text-gray-600 text-sm">
+                        Koordinator Program Ronda
+                    </p>
+                </div>
+
+                <!-- Footer Bottom -->
+                <div class="pt-4 border-t border-gray-100">
+                    <p class="text-xs text-gray-500">
+                        © {{ date('Y') }} Pesantren Assalam Al-Islami.
+                    </p>
+                </div>
+            </div>
+        </footer>
     </div>
+
 </div>
