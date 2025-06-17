@@ -13,17 +13,13 @@ class RondaShuffleService
     public function shuffle(RondaPeriode $periode): void
     {
         DB::transaction(function () use ($periode) {
-            RondaSchedule::whereHas('rondaTermin',
-                fn ($q) => $q->where('ronda_periode_id', $periode->id))
-                ->delete();
+            RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))->delete();
 
             $termins = $periode->rondaTermins()->withCount('rondaSchedules')->get();
             $terminIds = $termins->pluck('id')->toArray();
 
             $pollingSubmissions = PollingSubmission::with(['pollingCode', 'rondaTermin'])
-                ->whereHas('rondaTermin',
-                    fn ($q) => $q->where('ronda_periode_id', $periode->id)
-                )
+                ->whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))
                 ->get()
                 ->sortBy('sort')
                 ->groupBy('polling_code_id');
