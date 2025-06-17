@@ -13,13 +13,17 @@ class RondaShuffleService
     public function shuffle(RondaPeriode $periode): void
     {
         DB::transaction(function () use ($periode) {
-            RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))->delete();
+            RondaSchedule::whereHas('rondaTermin', function ($q) use ($periode) {
+                $q->where('ronda_periode_id', $periode->id);
+            })->delete();
 
             $termins = $periode->rondaTermins()->withCount('rondaSchedules')->get();
             $terminIds = $termins->pluck('id')->toArray();
 
             $pollingSubmissions = PollingSubmission::with(['pollingCode', 'rondaTermin'])
-                ->whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))
+                ->whereHas('rondaTermin', function ($q) use ($periode) {
+                    $q->where('ronda_periode_id', $periode->id);
+                })
                 ->get()
                 ->sortBy('sort')
                 ->groupBy('polling_code_id');
@@ -47,7 +51,6 @@ class RondaShuffleService
             foreach ($lockedSubmissions as $pollingCodeId => $submissions) {
                 if (isset($previousTerminMap[$pollingCodeId])) {
                     $assignedPollingCodeIds->push($pollingCodeId);
-
                     continue;
                 }
 
@@ -113,9 +116,9 @@ class RondaShuffleService
      */
     protected function assignUnpolledUsers(RondaPeriode $periode, $termins, $assignedPollingCodeIds, $previousTerminMap)
     {
-        $assignedIds = RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))
-            ->pluck('polling_code_id')
-            ->toArray();
+        $assignedIds = RondaSchedule::whereHas('rondaTermin', function ($q) use ($periode) {
+            $q->where('ronda_periode_id', $periode->id);
+        })->pluck('polling_code_id')->toArray();
 
         $unpolled = PollingCode::whereNotIn('id', $assignedIds)->get();
 
@@ -139,7 +142,6 @@ class RondaShuffleService
         $sortedTermins = $termins->map(function ($termin) {
             $currentCount = RondaSchedule::where('ronda_termin_id', $termin->id)->count();
             $termin->available_slots = max(0, $termin->max_petugas - $currentCount);
-
             return $termin;
         })->sortByDesc('available_slots')->values();
 
@@ -169,7 +171,7 @@ class RondaShuffleService
             }
 
             // If no slot available in quota, use round-robin on all termins
-            if (! $assigned && $termins->count() > 0) {
+            if (!$assigned && $termins->count() > 0) {
                 $targetTermin = $termins[$index % $termins->count()];
 
                 RondaSchedule::create([
@@ -188,9 +190,9 @@ class RondaShuffleService
      */
     protected function handleRemainingUnpolledUsers(RondaPeriode $periode, $termins)
     {
-        $assignedIds = RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $periode->id))
-            ->pluck('polling_code_id')
-            ->toArray();
+        $assignedIds = RondaSchedule::whereHas('rondaTermin', function ($q) use ($periode) {
+            $q->where('ronda_periode_id', $periode->id);
+        })->pluck('polling_code_id')->toArray();
 
         $stillUnpolled = PollingCode::whereNotIn('id', $assignedIds)->get();
 
@@ -225,8 +227,8 @@ class RondaShuffleService
             return [];
         }
 
-        return RondaSchedule::whereHas('rondaTermin', fn ($q) => $q->where('ronda_periode_id', $previousPeriode->id))
-            ->pluck('ronda_termin_id', 'polling_code_id')
-            ->toArray();
+        return RondaSchedule::whereHas('rondaTermin', function ($q) use ($previousPeriode) {
+            $q->where('ronda_periode_id', $previousPeriode->id);
+        })->pluck('ronda_termin_id', 'polling_code_id')->toArray();
     }
 }
